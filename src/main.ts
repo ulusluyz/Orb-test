@@ -10,20 +10,21 @@ import { ringVertexShader, ringFragmentShader } from './ringShaders';
 const appContainer = document.getElementById('app')!;
 const scene = new THREE.Scene();
 
-// Add a slight ambient light (though materials are custom shaders, this might not be needed, but good practice if adding other objects)
-// scene.add(new THREE.AmbientLight(0xffffff, 0.1));
-
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.z = 3;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Tone mapping to prevent extreme white blown-out areas
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
 appContainer.appendChild(renderer.domElement);
 
 // --- Colors ---
-const colorBlue = new THREE.Color(0x0088ff); // Cyan/Blue
-const colorOrange = new THREE.Color(0xff8800); // Orange/Gold
+// Slightly adjusted to match the requested look
+const colorBlue = new THREE.Color(0x00aaff); // Cyan/Blue
+const colorOrange = new THREE.Color(0xff6600); // Orange/Gold
 
 // --- Uniforms ---
 const sharedUniforms = {
@@ -34,29 +35,33 @@ const sharedUniforms = {
 };
 
 // --- Orb ---
-const orbGeometry = new THREE.SphereGeometry(1, 128, 128);
+const orbGeometry = new THREE.SphereGeometry(1, 256, 256); // High res for smooth noise displacement
 const orbMaterial = new THREE.ShaderMaterial({
     vertexShader: orbVertexShader,
     fragmentShader: orbFragmentShader,
     uniforms: sharedUniforms,
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending // Helps with the glowing ethereal look
+    // Additive blending works, but for a "glassy" dark look with emissive veins,
+    // we might want standard blending with pre-multiplied alpha or custom blending.
+    // Let's stick to CustomBlending to have fine control, or just use NormalBlending
+    // since we handle darkness and opacity in the shader.
+    blending: THREE.NormalBlending,
+    side: THREE.FrontSide
 });
 const orb = new THREE.Mesh(orbGeometry, orbMaterial);
 scene.add(orb);
 
 // --- Rings ---
-const numRings = 3;
+const numRings = 4;
 const rings: THREE.Mesh[] = [];
 
 for (let i = 0; i < numRings; i++) {
-    // Inner to outer radius
-    const radius = 1.4 + i * 0.3;
-    const tube = 0.015 + i * 0.005; // Slightly thicker towards the outside, or keep thin
+    const radius = 1.3 + i * 0.4;
+    // Make rings much thinner
+    const tube = 0.005 + i * 0.002;
 
-    // TorusGeometry(radius, tube, radialSegments, tubularSegments)
-    const ringGeometry = new THREE.TorusGeometry(radius, tube, 16, 100);
+    const ringGeometry = new THREE.TorusGeometry(radius, tube, 16, 200);
 
     const ringUniforms = {
         ...sharedUniforms,
@@ -69,18 +74,14 @@ for (let i = 0; i < numRings; i++) {
         uniforms: ringUniforms,
         transparent: true,
         depthWrite: false,
-        blending: THREE.AdditiveBlending
+        blending: THREE.AdditiveBlending, // Additive is fine for these faint glows
     });
 
     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
 
-    // Ensure rings are flat facing the camera
-    // Torus is created lying on the XY plane by default in Three.js? No, it's on XY.
-    // Wait, TorusGeometry in Three.js is on the XY plane.
-    // Let's verify. Actually, it is on the XY plane. So it faces the Z axis.
-
-    // Slight random rotation offset on Z so they don't look identical if noise matches
     ring.rotation.z = Math.random() * Math.PI * 2;
+    ring.rotation.x = Math.random() * 0.1; // Very slight tilt
+    ring.rotation.y = Math.random() * 0.1;
 
     rings.push(ring);
     scene.add(ring);
@@ -90,9 +91,9 @@ for (let i = 0; i < numRings; i++) {
 const renderScene = new RenderPass(scene, camera);
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    1.2, // strength
-    0.5, // radius
-    0.2  // threshold - lower threshold so more things glow
+    0.8, // strength: lower so it doesn't blow out the core
+    0.8, // radius: wide, soft bloom
+    0.3  // threshold: only brightest veins glow
 );
 
 const composer = new EffectComposer(renderer);
@@ -114,7 +115,6 @@ const btnOrange = document.getElementById('btn-orange')!;
 
 const buttons = [btnMixed, btnBlue, btnOrange];
 
-// Target weights: [Mixed, Blue, Orange]
 let targetWeights = new THREE.Vector3(1, 0, 0);
 
 function setMode(mode: 'mixed' | 'blue' | 'orange') {
@@ -142,19 +142,17 @@ function animate() {
     requestAnimationFrame(animate);
     const elapsedTime = clock.getElapsedTime();
 
-    // Update uniforms
     sharedUniforms.uTime.value = elapsedTime;
 
-    // Smoothly interpolate weights
+    // Smooth transition
     sharedUniforms.uWeights.value.lerp(targetWeights, 0.05);
 
-    // Rotate orb slowly
-    orb.rotation.y = elapsedTime * 0.1;
-    orb.rotation.z = elapsedTime * 0.05;
+    // Slow rotations
+    orb.rotation.y = elapsedTime * 0.05;
+    orb.rotation.z = elapsedTime * 0.02;
 
-    // Rotate rings slowly
     rings.forEach((ring, i) => {
-        ring.rotation.z = elapsedTime * (0.02 + i * 0.01) * (i % 2 === 0 ? 1 : -1);
+        ring.rotation.z = elapsedTime * (0.01 + i * 0.005) * (i % 2 === 0 ? 1 : -1);
     });
 
     composer.render();
