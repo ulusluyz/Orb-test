@@ -10,56 +10,50 @@ import { ringVertexShader, ringFragmentShader } from './ringShaders';
 const appContainer = document.getElementById('app')!;
 const scene = new THREE.Scene();
 
+// Make sure the camera is perfectly centered
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.z = 3;
+camera.position.set(0, 0, 3);
+camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-// Tone mapping to prevent extreme white blown-out areas
+
+// Tone mapping to prevent extreme white blown-out areas while preserving colors
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 appContainer.appendChild(renderer.domElement);
 
-// --- Colors ---
-// Slightly adjusted to match the requested look
-const colorBlue = new THREE.Color(0x00aaff); // Cyan/Blue
-const colorOrange = new THREE.Color(0xff6600); // Orange/Gold
-
 // --- Uniforms ---
 const sharedUniforms = {
     uTime: { value: 0 },
-    uColor1: { value: colorBlue },
-    uColor2: { value: colorOrange },
     uWeights: { value: new THREE.Vector3(1, 0, 0) } // Mixed mode default
 };
 
 // --- Orb ---
-const orbGeometry = new THREE.SphereGeometry(1, 256, 256); // High res for smooth noise displacement
+const orbGeometry = new THREE.SphereGeometry(1, 128, 128); // Standard resolution, noise handles details
 const orbMaterial = new THREE.ShaderMaterial({
     vertexShader: orbVertexShader,
     fragmentShader: orbFragmentShader,
     uniforms: sharedUniforms,
     transparent: true,
     depthWrite: false,
-    // Additive blending works, but for a "glassy" dark look with emissive veins,
-    // we might want standard blending with pre-multiplied alpha or custom blending.
-    // Let's stick to CustomBlending to have fine control, or just use NormalBlending
-    // since we handle darkness and opacity in the shader.
-    blending: THREE.NormalBlending,
+    blending: THREE.NormalBlending, // Normal blending handles the transparency built in the shader
     side: THREE.FrontSide
 });
 const orb = new THREE.Mesh(orbGeometry, orbMaterial);
+// Explicitly center the orb
+orb.position.set(0, 0, 0);
 scene.add(orb);
 
 // --- Rings ---
-const numRings = 4;
+const numRings = 3; // Reduced number of rings for sparse look
 const rings: THREE.Mesh[] = [];
 
 for (let i = 0; i < numRings; i++) {
-    const radius = 1.3 + i * 0.4;
-    // Make rings much thinner
-    const tube = 0.005 + i * 0.002;
+    const radius = 1.4 + i * 0.4;
+    // extremely thin rings
+    const tube = 0.002;
 
     const ringGeometry = new THREE.TorusGeometry(radius, tube, 16, 200);
 
@@ -74,14 +68,18 @@ for (let i = 0; i < numRings; i++) {
         uniforms: ringUniforms,
         transparent: true,
         depthWrite: false,
-        blending: THREE.AdditiveBlending, // Additive is fine for these faint glows
+        blending: THREE.NormalBlending, // Soft standard blending for subtle rings
     });
 
     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
 
+    // Minimal rotation to keep them somewhat aligned but slightly angled
     ring.rotation.z = Math.random() * Math.PI * 2;
-    ring.rotation.x = Math.random() * 0.1; // Very slight tilt
-    ring.rotation.y = Math.random() * 0.1;
+    ring.rotation.x = (Math.random() - 0.5) * 0.2;
+    ring.rotation.y = (Math.random() - 0.5) * 0.2;
+
+    // Explicitly center rings
+    ring.position.set(0, 0, 0);
 
     rings.push(ring);
     scene.add(ring);
@@ -91,9 +89,9 @@ for (let i = 0; i < numRings; i++) {
 const renderScene = new RenderPass(scene, camera);
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.8, // strength: lower so it doesn't blow out the core
-    0.8, // radius: wide, soft bloom
-    0.3  // threshold: only brightest veins glow
+    0.6, // strength: Reduced to prevent blowing out the veins
+    0.7, // radius: wide, soft bloom
+    0.5  // threshold: Only bloom the bright veins and inner volume hotspots
 );
 
 const composer = new EffectComposer(renderer);
@@ -147,12 +145,11 @@ function animate() {
     // Smooth transition
     sharedUniforms.uWeights.value.lerp(targetWeights, 0.05);
 
-    // Slow rotations
-    orb.rotation.y = elapsedTime * 0.05;
-    orb.rotation.z = elapsedTime * 0.02;
+    // Very slow rotation to emphasize inner volume motion
+    orb.rotation.y = elapsedTime * 0.02;
 
     rings.forEach((ring, i) => {
-        ring.rotation.z = elapsedTime * (0.01 + i * 0.005) * (i % 2 === 0 ? 1 : -1);
+        ring.rotation.z = elapsedTime * (0.005 + i * 0.002) * (i % 2 === 0 ? 1 : -1);
     });
 
     composer.render();
