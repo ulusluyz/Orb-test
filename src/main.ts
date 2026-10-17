@@ -10,16 +10,13 @@ import { ringVertexShader, ringFragmentShader } from './ringShaders';
 const appContainer = document.getElementById('app')!;
 const scene = new THREE.Scene();
 
-// Make sure the camera is perfectly centered
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 0, 3);
+camera.position.set(0, 0, 3.5); // Moved back slightly to show all 3 rings
 camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-// Tone mapping to prevent extreme white blown-out areas while preserving colors
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 appContainer.appendChild(renderer.domElement);
@@ -31,32 +28,31 @@ const sharedUniforms = {
 };
 
 // --- Orb ---
-const orbGeometry = new THREE.SphereGeometry(1, 128, 128); // Standard resolution, noise handles details
+const orbGeometry = new THREE.SphereGeometry(1, 256, 256); // High res for smooth displacement
 const orbMaterial = new THREE.ShaderMaterial({
     vertexShader: orbVertexShader,
     fragmentShader: orbFragmentShader,
     uniforms: sharedUniforms,
     transparent: true,
     depthWrite: false,
-    blending: THREE.NormalBlending, // Normal blending handles the transparency built in the shader
+    blending: THREE.NormalBlending,
     side: THREE.FrontSide
 });
 const orb = new THREE.Mesh(orbGeometry, orbMaterial);
-// Explicitly center the orb
 orb.position.set(0, 0, 0);
 scene.add(orb);
 
 // --- Rings ---
-const numRings = 3;
+// The reference has 3 distinct rings with increasing gaps
+const ringRadii = [1.2, 1.45, 1.8];
 const rings: THREE.Mesh[] = [];
 
-for (let i = 0; i < numRings; i++) {
-    // Rings in reference are close together, starting slightly away from the orb
-    const radius = 1.3 + i * 0.25;
-    // Extremely thin rings
-    const tube = 0.0025;
+for (let i = 0; i < ringRadii.length; i++) {
+    const radius = ringRadii[i];
+    // Slightly varying thickness
+    const tube = 0.003 + (i * 0.001);
 
-    const ringGeometry = new THREE.TorusGeometry(radius, tube, 16, 200);
+    const ringGeometry = new THREE.TorusGeometry(radius, tube, 32, 256);
 
     const ringUniforms = {
         ...sharedUniforms,
@@ -69,16 +65,13 @@ for (let i = 0; i < numRings; i++) {
         uniforms: ringUniforms,
         transparent: true,
         depthWrite: false,
-        blending: THREE.NormalBlending, // Soft standard blending for subtle rings
+        blending: THREE.AdditiveBlending, // Additive to make them pop and glow softly
     });
 
     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
 
-    // Very flat to the camera to look like concentric circles like in the reference
     ring.rotation.x = 0;
     ring.rotation.y = 0;
-
-    // Explicitly center rings
     ring.position.set(0, 0, 0);
 
     rings.push(ring);
@@ -89,9 +82,9 @@ for (let i = 0; i < numRings; i++) {
 const renderScene = new RenderPass(scene, camera);
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.8, // strength: Increased slightly for the sharp veins
-    1.0, // radius: wider, softer bloom for the edge glow
-    0.3  // threshold: Lowered slightly to catch the glow
+    1.2, // strength: Stronger for atmospheric glow
+    1.5, // radius: Very wide to simulate camera lens flare/atmosphere
+    0.1  // threshold: Low to catch the faint rings
 );
 
 const composer = new EffectComposer(renderer);
@@ -142,16 +135,15 @@ function animate() {
 
     sharedUniforms.uTime.value = elapsedTime;
 
-    // Smooth transition
     sharedUniforms.uWeights.value.lerp(targetWeights, 0.05);
 
-    // Avoid rotating the orb heavily on Y so the left-right gradient stays mostly fixed
-    // Just a very slow wobble
-    orb.rotation.y = Math.sin(elapsedTime * 0.1) * 0.1;
-    orb.rotation.z = Math.cos(elapsedTime * 0.1) * 0.05;
+    // Very subtle rotations for the orb to maintain gradient alignment
+    orb.rotation.y = Math.sin(elapsedTime * 0.05) * 0.1;
+    orb.rotation.z = Math.cos(elapsedTime * 0.05) * 0.05;
 
+    // Rings slowly spin
     rings.forEach((ring, i) => {
-        ring.rotation.z = elapsedTime * (0.02 + i * 0.01) * (i % 2 === 0 ? 1 : -1);
+        ring.rotation.z = elapsedTime * (0.01 + i * 0.005) * (i % 2 === 0 ? 1 : -1);
     });
 
     composer.render();

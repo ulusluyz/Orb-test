@@ -6,7 +6,6 @@ varying vec3 vPosition;
 void main() {
     vUv = uv;
     vPosition = position;
-    // Simple pass-through for the torus rings
     gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
 }
 `;
@@ -25,31 +24,33 @@ void main() {
     float blueW = uWeights.y;
     float orangeW = uWeights.z;
 
-    vec3 colorBlue = vec3(0.2, 0.6, 1.0); // Cyan/Blue
-    vec3 colorOrange = vec3(1.0, 0.7, 0.2); // Orange/Gold
+    vec3 colorBlue = vec3(0.3, 0.55, 1.0);
+    vec3 colorOrange = vec3(1.0, 0.6, 0.15);
+
+    // Calculate angle for gradient
+    float angle = atan(vPosition.y, vPosition.x); // -PI to PI
 
     vec3 ringColor;
     if (mixW > 0.5) {
-        // Alternating colors for mixed mode based on radius index
-        // Using fract(uRadius) trick from before to pick a side
-        float colorSelector = fract(uRadius * 3.14);
-        ringColor = mix(colorBlue, colorOrange, smoothstep(0.4, 0.6, colorSelector));
+        // Smooth gradient based on x position, exactly like the orb
+        // vPosition.x represents left-to-right
+        float mixFactor = smoothstep(-uRadius * 0.8, uRadius * 0.8, vPosition.x);
+        ringColor = mix(colorBlue, colorOrange, mixFactor);
     } else if (blueW > 0.5) {
         ringColor = colorBlue;
     } else {
         ringColor = colorOrange;
     }
 
-    // To match the reference, the ring should have a slight fading gradient based on its rotation
-    // We can simulate this using the vPosition in object space
-    float angle = atan(vPosition.y, vPosition.x);
-    // Add time to make the brighter part rotate around
-    float angularIntensity = (sin(angle + uTime * 0.5) * 0.5 + 0.5) * 0.5 + 0.5;
+    // The rings in the reference vary in intensity
+    // We add a soft pulse that travels around the ring
+    // Add offset based on radius so they don't pulse together
+    float angularIntensity = (sin(angle * 2.0 + uTime + uRadius * 10.0) * 0.5 + 0.5);
 
-    // Solid, semi-transparent base for the thin line
-    float baseAlpha = 0.25 * angularIntensity;
+    // Very faint base transparency, peaks at thicker spots
+    float baseAlpha = mix(0.1, 0.5, angularIntensity);
 
-    // Output with standard blending
-    gl_FragColor = vec4(ringColor * 1.5, baseAlpha);
+    // Increase color brightness to punch through bloom
+    gl_FragColor = vec4(ringColor * 2.0, baseAlpha);
 }
 `;

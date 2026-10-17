@@ -1,4 +1,4 @@
-// GLSL 3D simplex noise function
+// GLSL 3D simplex noise function and FBM
 const snoise = `
 vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -65,6 +65,18 @@ float snoise(vec3 v) {
   return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),
                                 dot(p2,x2), dot(p3,x3) ) );
 }
+
+float fbm(vec3 x) {
+    float v = 0.0;
+    float a = 0.5;
+    vec3 shift = vec3(100.0);
+    for (int i = 0; i < 4; ++i) {
+        v += a * snoise(x);
+        x = x * 2.0 + shift;
+        a *= 0.5;
+    }
+    return v;
+}
 `;
 
 export const orbVertexShader = `
@@ -79,12 +91,18 @@ ${snoise}
 void main() {
     vUv = uv;
     vPosition = position;
-    // We compute a very simple normal. In standard meshes, normal is provided.
     vNormal = normalize(normalMatrix * normal);
     vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
 
-    // Low-frequency displacement to avoid the "bumpy" planet look
-    float disp = snoise(position * 2.0 + uTime * 0.2) * 0.01;
+    // More prominent, lower-frequency wobble to break perfect sphere shape
+    // using time and position to deform the vertices
+    float time = uTime * 0.15;
+    float noiseVal = snoise(position * 1.2 + time);
+    // Add a secondary noise to make it less uniform
+    noiseVal += 0.5 * snoise(position * 2.5 - time * 1.5);
+
+    // Deform outward and inward
+    float disp = noiseVal * 0.06;
     vec3 newPos = position + normal * disp;
 
     gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(newPos, 1.0);
@@ -102,34 +120,30 @@ varying vec3 vWorldPosition;
 
 ${snoise}
 
-// Smooth min function for blending noise fields
-float smin(float a, float b, float k) {
-    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-    return mix(b, a, h) - k * h * (1.0 - h);
-}
-
 void main() {
     vec3 p = vPosition;
     vec3 viewDir = normalize(cameraPosition - vWorldPosition);
     float fresnel = clamp(1.0 - dot(viewDir, vNormal), 0.0, 1.0);
 
-    // 1. Dark base color (very dark blue/black)
-    vec3 baseColor = vec3(0.005, 0.01, 0.02);
+    // Deep black base color
+    vec3 baseColor = vec3(0.00, 0.005, 0.015);
 
     // Weights for color modes
     float mixW = uWeights.x;
     float blueW = uWeights.y;
     float orangeW = uWeights.z;
 
-    // Fixed color palettes
-    vec3 colorBlue = vec3(0.2, 0.6, 1.0); // Cyan/Blue
-    vec3 colorOrange = vec3(1.0, 0.7, 0.2); // Orange/Gold
+    // Adjusted color palettes to match reference more closely
+    // Blue is softer and slightly more indigo/cyan
+    vec3 colorBlue = vec3(0.3, 0.55, 1.0);
+    // Orange is slightly more yellow/gold
+    vec3 colorOrange = vec3(1.0, 0.6, 0.15);
 
-    // Determine the base color of the glow and veins based on position and mode
+    // Gradient based on horizontal position for mixed mode
     vec3 mainColor;
     if (mixW > 0.5) {
-        // In mixed mode, left is blue, right is orange (based on x position)
-        float mixFactor = smoothstep(-0.6, 0.6, p.x);
+        // -0.3 to 0.3 for a softer blend in the middle
+        float mixFactor = smoothstep(-0.3, 0.3, p.x);
         mainColor = mix(colorBlue, colorOrange, mixFactor);
     } else if (blueW > 0.5) {
         mainColor = colorBlue;
@@ -137,40 +151,58 @@ void main() {
         mainColor = colorOrange;
     }
 
-    // 2. Caustic-like sharp veins
-    // We use a combination of noise functions to create flowy, sharp lines
-    vec3 flowDir = vec3(0.0, uTime * 0.05, uTime * 0.08); // slowed down
-    vec3 noisePos = p * 1.5 + flowDir; // lower frequency for sparser veins
+    // --- Smoke / Silk Veins ---
+    // Domain warping: distort the coordinates used for noise
+    vec3 q = vec3(
+        fbm(p + uTime * 0.05),
+        fbm(p + vec3(5.2, 1.3, 2.8) - uTime * 0.04),
+        fbm(p + vec3(3.1, 8.4, 1.9) + uTime * 0.03)
+    );
 
-    // Sharp ridged noise
-    float n1 = 1.0 - abs(snoise(noisePos));
-    float n2 = 1.0 - abs(snoise(noisePos * 2.1 - flowDir * 1.5));
+    vec3 r = vec3(
+        fbm(p + 4.0 * q + vec3(1.7, 9.2, 4.3) + uTime * 0.1),
+        fbm(p + 4.0 * q + vec3(8.3, 2.8, 1.4) - uTime * 0.12),
+        fbm(p + 4.0 * q + vec3(5.1, 3.7, 7.2) + uTime * 0.08)
+    );
 
-    // Sharpen heavily to make them very thin and stringy, not blotchy
-    float combinedNoise = (n1 + n2 * 0.5) / 1.5;
-    // VERY high power makes it extremely sharp and mostly black
-    float veinIntensity = pow(combinedNoise, 12.0) * 4.0;
+    // Smooth flowing field
+    float f = fbm(p + 3.0 * r);
 
-    // Soften the veins towards the edges (fresnel mask)
-    float veinMask = smoothstep(0.9, 0.3, fresnel);
-    veinIntensity *= veinMask;
+    // Create sharp but smooth wisps from the warped field
+    // sin() creates repeating bands, which we sharpen
+    float wisp = sin(f * 15.0 + uTime * 0.5) * 0.5 + 0.5;
 
-    // Remove the volume cloud entirely, the reference is very dark inside
+    // Power controls thickness of the silk threads
+    float veinIntensity = pow(wisp, 8.0) * 1.5;
 
-    // 3. Edge Glow (Fresnel)
-    // The reference has a very distinct, soft, but bright edge glow
-    float edgeGlow = pow(fresnel, 3.5) * 1.2; // Tighter, brighter edge
+    // Add some soft overall volume clouds behind the sharp wisps
+    float softVolume = f * 0.4;
+
+    // Mask veins near the very center to give depth, and also mask at the extreme edge
+    float depthMask = smoothstep(0.0, 0.6, fresnel) * smoothstep(1.0, 0.7, fresnel);
+
+    // --- Edge Glow (Fresnel Atmospheric Rim) ---
+    // Soft, wide glow on the edge
+    float rim = smoothstep(0.4, 1.0, fresnel);
+    // Add a sharper rim right at the edge
+    float sharpRim = pow(fresnel, 4.0) * 2.0;
+    float edgeGlow = rim * 0.8 + sharpRim;
 
     // Combine visual elements
     vec3 colorOutput = baseColor;
-    colorOutput += mainColor * veinIntensity;
+
+    // The inner volume is very dim
+    colorOutput += mainColor * softVolume * 0.2 * depthMask;
+
+    // The silk veins are bright
+    colorOutput += mainColor * veinIntensity * depthMask * 2.0;
+
+    // The edge glow defines the sphere
     colorOutput += mainColor * edgeGlow;
 
-    // 4. Alpha / Transparency Control
-    // The sphere is largely transparent except for the glowing parts
-    float lum = dot(colorOutput, vec3(0.299, 0.587, 0.114));
-    // Keep alpha low in dark areas
-    float alpha = clamp(0.1 + lum * 1.2, 0.0, 1.0);
+    // Transparency control
+    // Very transparent in the middle, opaque at edges and on veins
+    float alpha = clamp(veinIntensity + edgeGlow * 1.5 + 0.1, 0.0, 1.0);
 
     gl_FragColor = vec4(colorOutput, alpha);
 }
