@@ -47,13 +47,14 @@ orb.position.set(0, 0, 0);
 scene.add(orb);
 
 // --- Rings ---
-const numRings = 3; // Reduced number of rings for sparse look
+const numRings = 3;
 const rings: THREE.Mesh[] = [];
 
 for (let i = 0; i < numRings; i++) {
-    const radius = 1.4 + i * 0.4;
-    // extremely thin rings
-    const tube = 0.002;
+    // Rings in reference are close together, starting slightly away from the orb
+    const radius = 1.3 + i * 0.25;
+    // Extremely thin rings
+    const tube = 0.0025;
 
     const ringGeometry = new THREE.TorusGeometry(radius, tube, 16, 200);
 
@@ -73,10 +74,9 @@ for (let i = 0; i < numRings; i++) {
 
     const ring = new THREE.Mesh(ringGeometry, ringMaterial);
 
-    // Minimal rotation to keep them somewhat aligned but slightly angled
-    ring.rotation.z = Math.random() * Math.PI * 2;
-    ring.rotation.x = (Math.random() - 0.5) * 0.2;
-    ring.rotation.y = (Math.random() - 0.5) * 0.2;
+    // Very flat to the camera to look like concentric circles like in the reference
+    ring.rotation.x = 0;
+    ring.rotation.y = 0;
 
     // Explicitly center rings
     ring.position.set(0, 0, 0);
@@ -89,9 +89,9 @@ for (let i = 0; i < numRings; i++) {
 const renderScene = new RenderPass(scene, camera);
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.6, // strength: Reduced to prevent blowing out the veins
-    0.7, // radius: wide, soft bloom
-    0.5  // threshold: Only bloom the bright veins and inner volume hotspots
+    0.8, // strength: Increased slightly for the sharp veins
+    1.0, // radius: wider, softer bloom for the edge glow
+    0.3  // threshold: Lowered slightly to catch the glow
 );
 
 const composer = new EffectComposer(renderer);
@@ -145,11 +145,13 @@ function animate() {
     // Smooth transition
     sharedUniforms.uWeights.value.lerp(targetWeights, 0.05);
 
-    // Very slow rotation to emphasize inner volume motion
-    orb.rotation.y = elapsedTime * 0.02;
+    // Avoid rotating the orb heavily on Y so the left-right gradient stays mostly fixed
+    // Just a very slow wobble
+    orb.rotation.y = Math.sin(elapsedTime * 0.1) * 0.1;
+    orb.rotation.z = Math.cos(elapsedTime * 0.1) * 0.05;
 
     rings.forEach((ring, i) => {
-        ring.rotation.z = elapsedTime * (0.005 + i * 0.002) * (i % 2 === 0 ? 1 : -1);
+        ring.rotation.z = elapsedTime * (0.02 + i * 0.01) * (i % 2 === 0 ? 1 : -1);
     });
 
     composer.render();
